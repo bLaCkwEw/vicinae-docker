@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { dirname } from "node:path";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -23,7 +24,16 @@ import {
   stopContainer,
   unpauseContainer,
 } from "./lib/docker";
-import { composeDown, composeRestart, composeStart, composeStop, composeUp } from "./lib/compose";
+import {
+  composeDown,
+  composeRestart,
+  composeStart,
+  composeStop,
+  composeUp,
+  composeUpProject,
+} from "./lib/compose";
+import { forgetProject, loadKnownProjects, rememberProjects } from "./lib/known";
+import type { KnownProject } from "./lib/known";
 import type { ComposeProject, ContainerItem } from "./lib/types";
 
 interface Preferences {
@@ -69,6 +79,7 @@ export default function ManageContainers() {
   const [containers, setContainers] = useState<ContainerItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [known, setKnown] = useState<KnownProject[]>([]);
   const inFlight = useRef(false);
   const outageNotified = useRef(false);
 
@@ -80,6 +91,7 @@ export default function ManageContainers() {
       if (!silent) setIsLoading(true);
       const items = await listContainers(prefs.socketPath);
       setContainers(items);
+      setKnown(await rememberProjects(groupContainers(items).projects));
       setError(null);
       outageNotified.current = false;
     } catch (e) {
@@ -104,9 +116,16 @@ export default function ManageContainers() {
   }, []);
 
   useEffect(() => {
-    void refresh(false);
+    let cancelled = false;
+    void (async () => {
+      setKnown(await loadKnownProjects());
+      if (!cancelled) await refresh(false);
+    })();
     const t = setInterval(() => void refresh(true), POLL_MS);
-    return () => clearInterval(t);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
   }, [refresh]);
 
   const mutate = useCallback(
@@ -129,7 +148,30 @@ export default function ManageContainers() {
 
   const { projects, standalone } = useMemo(() => groupContainers(containers), [containers]);
 
-  if (error && containers.length === 0 && !isLoading) {
+  const forget = useCallback(async (project: string) => {
+    setKnown(await forgetProject(project));
+  }, []);
+
+  /** Known projects with nothing currently running: Up-able from their compose files. */
+  const offlineKnown = useMemo(() => {
+    const live = new Set(projects.map((p) => p.name));
+    return known
+      .filter((k) => !live.has(k.project))
+      .map((k) => ({
+        ...k,
+        broken:
+          k.files.length === 0 ||
+          !k.files.every((f) => {
+            try {
+              return statSync(f).isFile();
+            } catch {
+              return false;
+            }
+          }),
+      }));
+  }, [known, projects]);
+
+  if (error && containers.length === 0 && offlineKnown.length === 0 && !isLoading) {
     return (
       <List searchBarPlaceholder="Search containers by name, image or status...">
         <List.EmptyView
@@ -339,13 +381,99 @@ export default function ManageContainers() {
     />
   );
 
+  const renderKnownItem = (k: (typeof offlineKnown)[number]) => (
+    <List.Item
+      key={`known-${k.project}`}
+      title={k.project}
+      subtitle={k.broken ? "Compose files missing" : "Compose (down)"}
+      keywords={[k.project, ...k.files]}
+      icon={{ source: Icon.Box }}
+      accessories={[{ text: k.broken ? "unavailable" : "down" }]}
+      detail={
+        <List.Item.Detail
+          metadata={
+            <List.Item.Detail.Metadata>
+              <List.Item.Detail.Metadata.Label title="Compose Project" text={k.project} />
+              <List.Item.Detail.Metadata.Label title="State" text="down" />
+              <List.Item.Detail.Metadata.Label title="Compose File" text={k.files.join(", ")} />
+              {k.files.length > 0 && (
+                <List.Item.Detail.Metadata.Label
+                  title="Compose Folder"
+                  text={dirname(k.files[0])}
+                />
+              )}
+              <List.Item.Detail.Metadata.Label
+                title="Last Seen"
+                text={k.lastSeen ? new Date(k.lastSeen).toLocaleString() : "—"}
+              />
+            </List.Item.Detail.Metadata>
+          }
+        />
+      }
+      actions={
+        <ActionPanel>
+          {!k.broken && (
+            <Action
+              title="Compose Up"
+              icon={Icon.Upload}
+              onAction={async () => {
+                if (
+                  await confirmAlert({
+                    title: `Compose up ${k.project}?`,
+                    message: `Runs: docker compose -p ${k.project} up -d\nFiles: ${k.files.join(", ")}`,
+                    primaryAction: { title: "Up" },
+                  })
+                ) {
+                  await mutate(`Compose up ${k.project}`, () =>
+                    composeUpProject(k.project, k.files),
+                  );
+                }
+              }}
+            />
+          )}
+          {k.files.length > 0 && (
+            <Action
+              title="Open Compose File"
+              icon={Icon.Code}
+              onAction={() => void open(k.files[0])}
+            />
+          )}
+          {k.files.length > 0 && (
+            <Action.ShowInFinder
+              title="Show Compose File Location"
+              icon={Icon.Folder}
+              path={k.files[0]}
+            />
+          )}
+          <Action
+            title="Forget Project"
+            icon={Icon.Trash}
+            style={Action.Style.Destructive}
+            shortcut={{ modifiers: ["ctrl"], key: "x" }}
+            onAction={async () => {
+              if (
+                await confirmAlert({
+                  title: `Forget ${k.project}?`,
+                  message: "Removes it from this list only. Compose files are left untouched.",
+                  primaryAction: { title: "Forget", style: Alert.ActionStyle.Destructive },
+                })
+              ) {
+                await forget(k.project);
+              }
+            }}
+          />
+        </ActionPanel>
+      }
+    />
+  );
+
   return (
     <List
       isLoading={isLoading}
       isShowingDetail
       searchBarPlaceholder="Search containers by name, image or status..."
     >
-      {containers.length === 0 && !isLoading ? (
+      {containers.length === 0 && offlineKnown.length === 0 && !isLoading ? (
         <List.EmptyView
           icon={Icon.Box}
           title="No containers"
@@ -361,6 +489,14 @@ export default function ManageContainers() {
           {standalone.length > 0 && (
             <List.Section title="Containers" subtitle={`${standalone.length}`}>
               {standalone.map((c) => renderItem(c))}
+            </List.Section>
+          )}
+          {offlineKnown.length > 0 && (
+            <List.Section
+              title="Known Compose Projects"
+              subtitle={error ? "Down — Docker unreachable" : "Down"}
+            >
+              {offlineKnown.map(renderKnownItem)}
             </List.Section>
           )}
         </>

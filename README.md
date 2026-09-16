@@ -14,6 +14,9 @@ containers and Compose projects — all from the launcher.
   Pause/Unpause, Copy ID / Name / Image
 - **Compose project actions** — Up, Down (with confirmation), Start All,
   Stop All, Restart All, plus Open Compose File and Show Compose File Location
+- **Known compose projects** — projects stay listed after Down so you can Up
+  them later (with confirmation); entries with missing files are marked
+  unavailable, and Forget removes list entries without touching files
 - **Live updates** — silent 3s poll while the view is open, instant refresh
   after every action, no caching
 - **Configurable socket** — `socketPath` preference (default

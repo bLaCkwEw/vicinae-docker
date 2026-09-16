@@ -66,6 +66,12 @@ export async function composeUp(containers: ContainerItem[]): Promise<string> {
   return runCompose(project, files, ["up", "-d"]);
 }
 
+/** Up for a remembered (currently down) project: no live containers needed. */
+export async function composeUpProject(project: string, files: string[]): Promise<string> {
+  if (files.length === 0) throw composeMissingFilesError(project);
+  return runCompose(project, files, ["up", "-d"]);
+}
+
 export async function composeDown(containers: ContainerItem[]): Promise<string> {
   const { project, files } = filesOrThrow(containers);
   return runCompose(project, files, ["down"]);

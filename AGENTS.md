@@ -1,5 +1,8 @@
 # AGENTS.md — vicinae-docker
 
+Keep this file and README.md up to date with every change: structure, commands,
+features, and notes must reflect the current state of the repo.
+
 Vicinae extension (TypeScript + React via `@vicinae/api`) to manage local Docker
 containers and Compose projects. Package manager: **pnpm**.
 
@@ -9,6 +12,7 @@ containers and Compose projects. Package manager: **pnpm**.
 - `src/manage-containers.tsx` — the single `Manage Docker Containers` view
 - `src/lib/docker.ts` — Docker Engine API client over the unix socket (no deps)
 - `src/lib/compose.ts` — `docker compose` CLI wrapper (up/down/start/stop/restart)
+- `src/lib/known.ts` — remembered compose projects in `LocalStorage` (for Up after Down)
 - `src/lib/types.ts` — shared types
 - `assets/extension_icon.png` — extension icon
 
