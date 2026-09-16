@@ -55,7 +55,7 @@ pnpm dev
 ## How it works
 
 - Container state and lifecycle ops talk directly to the Docker Engine API over
-  the unix socket (no `dockerode`, no native modules — dependency-free).
+  the unix socket.
 - Compose Up/Down/etc. shell out to `docker compose -f <files> …`, using the
   config-file paths from the `com.docker.compose.project.config_files` label.
 - No background daemon, no stored state: polling only runs while the view is open.
