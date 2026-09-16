@@ -3,6 +3,7 @@ import type { ContainerItem } from "./types";
 
 const DEFAULT_SOCKET = "/var/run/docker.sock";
 const API_VERSION = "v1.47";
+const REQUEST_TIMEOUT_MS = 10_000;
 
 interface EngineContainer {
   Id: string;
@@ -37,6 +38,9 @@ function request(
       },
     );
     req.on("error", reject);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Docker API request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+    });
     req.end();
   });
 }
@@ -64,8 +68,9 @@ function parseConfigFiles(labels: Record<string, string>): string[] {
     labels["com.docker.compose.project.config-files"] ??
     "";
   if (!raw.trim()) return [];
+  // Compose writes this label as a comma-separated list of absolute paths.
   return raw
-    .split(/[,;:]/)
+    .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -74,7 +79,12 @@ export async function listContainers(socketPath?: string): Promise<ContainerItem
   const sock = socketPath?.trim() || DEFAULT_SOCKET;
   const { status, body } = await request(sock, "GET", "/containers/json", { all: 1 });
   failIfError("List", "containers", status, body);
-  const infos = JSON.parse(body) as EngineContainer[];
+  let infos: EngineContainer[];
+  try {
+    infos = JSON.parse(body) as EngineContainer[];
+  } catch {
+    throw new Error(`List containers failed (HTTP ${status}): unexpected non-JSON response`);
+  }
   return infos.map((c) => {
     const labels = c.Labels ?? {};
     const state = c.State ?? "unknown";

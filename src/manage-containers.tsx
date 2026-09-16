@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Action,
   ActionPanel,
@@ -10,6 +10,7 @@ import {
   Toast,
   confirmAlert,
   getPreferenceValues,
+  open,
   showToast,
 } from "@vicinae/api";
 import {
@@ -68,19 +69,37 @@ export default function ManageContainers() {
   const [containers, setContainers] = useState<ContainerItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const outageNotified = useRef(false);
 
   const refresh = useCallback(async (silent = false) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
       const prefs = getPreferenceValues<Preferences>();
       if (!silent) setIsLoading(true);
       const items = await listContainers(prefs.socketPath);
       setContainers(items);
       setError(null);
+      outageNotified.current = false;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(msg.includes("ENOENT") ? `Cannot reach Docker socket. Is Docker running?\n${msg}` : msg);
+      const friendly = msg.includes("ENOENT")
+        ? `Cannot reach Docker socket. Is Docker running?\n${msg}`
+        : msg;
+      setError(friendly);
+      // A list is already on screen: the stale data would otherwise fail silently.
+      // Notify once per outage, not on every 3s tick.
+      setContainers((prev) => {
+        if (prev.length > 0 && !outageNotified.current) {
+          outageNotified.current = true;
+          void showToast({ style: Toast.Style.Failure, title: "Lost connection to Docker", message: friendly });
+        }
+        return prev;
+      });
     } finally {
       setIsLoading(false);
+      inFlight.current = false;
     }
   }, []);
 
@@ -153,16 +172,18 @@ export default function ManageContainers() {
             }
           />
         )}
-        <Action
-          title="Restart"
-          icon={Icon.ArrowClockwise}
-          shortcut={{ modifiers: ["cmd"], key: "r" }}
-          onAction={() =>
-            void mutate(`Restarting ${c.name}`, () =>
-              restartContainer(c.id, getPreferenceValues<Preferences>().socketPath, STOP_TIMEOUT),
-            )
-          }
-        />
+        {!c.paused && (
+          <Action
+            title="Restart"
+            icon={Icon.ArrowClockwise}
+            shortcut={{ modifiers: ["cmd"], key: "r" }}
+            onAction={() =>
+              void mutate(`Restarting ${c.name}`, () =>
+                restartContainer(c.id, getPreferenceValues<Preferences>().socketPath, STOP_TIMEOUT),
+              )
+            }
+          />
+        )}
         {c.running && !c.paused && (
           <Action
             title="Pause"
@@ -247,10 +268,10 @@ export default function ManageContainers() {
             }
           />
           {project.configFiles.length > 0 && (
-            <Action.Open
+            <Action
               title="Open Compose File"
-              icon={Icon.Document}
-              target={project.configFiles[0]}
+              icon={Icon.Code}
+              onAction={() => void open(project.configFiles[0])}
             />
           )}
           {project.configFiles.length > 0 && (

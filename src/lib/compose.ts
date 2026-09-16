@@ -1,8 +1,13 @@
 import { execFile } from "node:child_process";
+import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
 import type { ContainerItem } from "./types";
 
 const execFileAsync = promisify(execFile);
+
+function projectName(containers: ContainerItem[]): string {
+  return containers[0]?.composeProject ?? "unknown";
+}
 
 function projectConfigFiles(containers: ContainerItem[]): string[] {
   for (const c of containers) {
@@ -11,16 +16,32 @@ function projectConfigFiles(containers: ContainerItem[]): string[] {
   return [];
 }
 
-function composeArgs(configFiles: string[], subcommand: string[]): string[] {
-  const args: string[] = [];
+/** Label values are container-controlled: only allow absolute paths, never flags. */
+function sanitizeConfigFiles(files: string[], project: string): string[] {
+  const clean = files.filter((f) => isAbsolute(f) && !f.startsWith("-"));
+  if (clean.length !== files.length) {
+    throw new Error(
+      `Refusing to run compose for project "${project}": suspicious config file path in container labels.`,
+    );
+  }
+  return clean;
+}
+
+function composeArgs(project: string, configFiles: string[], subcommand: string[]): string[] {
+  const args: string[] = ["-p", project];
   for (const f of configFiles) args.push("-f", f);
   args.push(...subcommand);
   return args;
 }
 
-async function runCompose(configFiles: string[], subcommand: string[]): Promise<string> {
-  const args = composeArgs(configFiles, subcommand);
-  // `docker compose ...` (plugin form, no cwd dependency when -f is given)
+async function runCompose(
+  project: string,
+  configFiles: string[],
+  subcommand: string[],
+): Promise<string> {
+  const files = sanitizeConfigFiles(configFiles, project);
+  // `docker compose -p <project> -f <files> ...` (no cwd dependency when -f is given)
+  const args = composeArgs(project, files, subcommand);
   const { stdout, stderr } = await execFileAsync("docker", ["compose", ...args], {
     timeout: 120_000,
   });
@@ -33,32 +54,34 @@ export function composeMissingFilesError(project: string): Error {
   );
 }
 
-export async function composeUp(containers: ContainerItem[]): Promise<string> {
+function filesOrThrow(containers: ContainerItem[]): { project: string; files: string[] } {
+  const project = projectName(containers);
   const files = projectConfigFiles(containers);
-  if (files.length === 0) throw composeMissingFilesError(containers[0]?.composeProject ?? "unknown");
-  return runCompose(files, ["up", "-d"]);
+  if (files.length === 0) throw composeMissingFilesError(project);
+  return { project, files };
+}
+
+export async function composeUp(containers: ContainerItem[]): Promise<string> {
+  const { project, files } = filesOrThrow(containers);
+  return runCompose(project, files, ["up", "-d"]);
 }
 
 export async function composeDown(containers: ContainerItem[]): Promise<string> {
-  const files = projectConfigFiles(containers);
-  if (files.length === 0) throw composeMissingFilesError(containers[0]?.composeProject ?? "unknown");
-  return runCompose(files, ["down"]);
+  const { project, files } = filesOrThrow(containers);
+  return runCompose(project, files, ["down"]);
 }
 
 export async function composeStart(containers: ContainerItem[]): Promise<string> {
-  const files = projectConfigFiles(containers);
-  if (files.length === 0) throw composeMissingFilesError(containers[0]?.composeProject ?? "unknown");
-  return runCompose(files, ["start"]);
+  const { project, files } = filesOrThrow(containers);
+  return runCompose(project, files, ["start"]);
 }
 
 export async function composeStop(containers: ContainerItem[]): Promise<string> {
-  const files = projectConfigFiles(containers);
-  if (files.length === 0) throw composeMissingFilesError(containers[0]?.composeProject ?? "unknown");
-  return runCompose(files, ["stop"]);
+  const { project, files } = filesOrThrow(containers);
+  return runCompose(project, files, ["stop"]);
 }
 
 export async function composeRestart(containers: ContainerItem[]): Promise<string> {
-  const files = projectConfigFiles(containers);
-  if (files.length === 0) throw composeMissingFilesError(containers[0]?.composeProject ?? "unknown");
-  return runCompose(files, ["restart"]);
+  const { project, files } = filesOrThrow(containers);
+  return runCompose(project, files, ["restart"]);
 }
