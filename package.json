@@ -1,0 +1,45 @@
+{
+  "$schema": "https://raw.githubusercontent.com/vicinaehq/vicinae/refs/heads/main/extra/schemas/extension.json",
+  "name": "vicinae-docker",
+  "title": "Docker",
+  "description": "List and control local Docker containers and Compose projects",
+  "categories": ["Developer Tools"],
+  "license": "MIT",
+  "author": "vicinae-docker",
+  "contributors": [],
+  "pastContributors": [],
+  "icon": "extension_icon.png",
+  "commands": [
+    {
+      "name": "manage-containers",
+      "title": "Manage Docker Containers",
+      "subtitle": "Containers & Compose",
+      "description": "List, start, stop, restart and remove Docker containers and Compose projects",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "socketPath",
+      "title": "Docker Socket Path",
+      "description": "Path to the Docker socket (supports rootless/podman overrides)",
+      "type": "textfield",
+      "required": false,
+      "default": "/var/run/docker.sock"
+    }
+  ],
+  "scripts": {
+    "build": "vici build",
+    "dev": "vici develop",
+    "lint": "vici lint"
+  },
+  "dependencies": {
+    "@vicinae/api": "^0.16.11"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "react": "19.0.0",
+    "@types/react": "19.0.10",
+    "@types/node": "^20.0.0"
+  }
+}
