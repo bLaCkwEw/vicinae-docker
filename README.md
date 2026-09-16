@@ -62,7 +62,7 @@ pnpm dev
 
 ## Credits
 
-- Extension icon: Docker mark from [Simple Icons](https://simpleicons.org/icons/docker.html) (CC0).
+- Extension icon: Docker mark from [Simple Icons](https://simpleicons.org/?q=docker&modal=icon) (CC0).
 
 ## License
 
