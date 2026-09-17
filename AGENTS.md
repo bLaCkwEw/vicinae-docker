@@ -10,8 +10,12 @@ containers and Compose projects. Package manager: **pnpm**.
 
 - `package.json` — extension manifest (commands, preferences, scripts)
 - `src/manage-containers.tsx` — the single `Manage Docker Containers` view
-- `src/lib/docker.ts` — Docker Engine API client over the unix socket (no deps)
-- `src/lib/compose.ts` — `docker compose` CLI wrapper (up/down/start/stop/restart)
+- `src/lib/docker.ts` — Docker Engine API client over the unix socket (no deps),
+  incl. `resolveSocketPath()` auto-detect (explicit pref > DOCKER_HOST >
+  $XDG_RUNTIME_DIR/docker.sock > /run/user/<uid>/docker.sock >
+  ~/.docker/run/docker.sock > podman sockets > /var/run/docker.sock)
+- `src/lib/compose.ts` — `docker compose` CLI wrapper (up/down/start/stop/restart),
+  sets `DOCKER_HOST=unix://<resolved>` unless already in env
 - `src/lib/known.ts` — remembered compose projects in `LocalStorage` (for Up after Down)
 - `src/lib/types.ts` — shared types
 - `assets/extension_icon.png` — extension icon
@@ -30,7 +34,9 @@ Direct binaries (avoids pnpm's build-script gate): `./node_modules/.bin/tsc --no
 ## Notes
 
 - No native/npm Docker deps on purpose (`vici build` can't bundle them).
-- Docker state: Engine API over `socketPath` preference, 3s silent poll, no cache.
+- Docker state: Engine API over resolved `socketPath` (default pref acts as auto),
+  3s silent poll, no cache. The Engine client only speaks unix sockets, so a
+  non-`unix://` DOCKER_HOST is ignored there but still honored by Compose.
 - Compose file paths come from the `com.docker.compose.project.config_files` label.
 - After `pnpm build`, the daemon sometimes needs `systemctl --user restart vicinae`
   to pick up the new bundle.

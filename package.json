@@ -22,7 +22,7 @@
     {
       "name": "socketPath",
       "title": "Docker Socket Path",
-      "description": "Path to the Docker socket (supports rootless/podman overrides)",
+      "description": "Path to the Docker socket. Leave the default for auto-detect (DOCKER_HOST, rootless $XDG_RUNTIME_DIR/docker.sock, Podman); set another path to override. Note: the default value always means auto-detect, it cannot be pinned.",
       "type": "textfield",
       "required": false,
       "default": "/var/run/docker.sock"

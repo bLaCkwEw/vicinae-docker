@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import http from "node:http";
+import { homedir } from "node:os";
 import type { ContainerItem } from "./types";
 
 const DEFAULT_SOCKET = "/var/run/docker.sock";
@@ -14,6 +16,66 @@ interface EngineContainer {
   Created?: number;
   Labels?: Record<string, string>;
   Ports?: { IP?: string; PrivatePort: number; PublicPort?: number; Type: string }[];
+}
+
+function normalizeSocketPath(p: string): string {
+  let s = p.trim();
+  if (s.startsWith("unix://")) s = s.slice("unix://".length);
+  if (s.startsWith("~/")) s = homedir() + s.slice(1);
+  return s;
+}
+
+function dockerHostSocket(): string | null {
+  const raw = process.env.DOCKER_HOST?.trim();
+  if (!raw) return null;
+  if (raw.startsWith("unix://")) return normalizeSocketPath(raw);
+  // Only unix sockets are usable by the Engine API client; tcp/ssh need the CLI.
+  return null;
+}
+
+function uid(): number | null {
+  const getuid = (process as NodeJS.Process & { getuid?: () => number }).getuid;
+  if (typeof getuid !== "function") return null;
+  try {
+    return getuid();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve which socket to talk to.
+ *
+ * An explicit non-default preference is always honored verbatim. The shipped
+ * default (`/var/run/docker.sock`) acts as "auto": when it doesn't exist —
+ * the norm for rootless Docker on Fedora (`$XDG_RUNTIME_DIR/docker.sock`) —
+ * the first existing candidate wins. Returns the preference/default unchanged
+ * when nothing exists so callers still surface a familiar path in errors.
+ */
+export function resolveSocketPath(preferred?: string): string {
+  const raw = preferred?.trim() ?? "";
+  if (raw && normalizeSocketPath(raw) !== DEFAULT_SOCKET) return normalizeSocketPath(raw);
+
+  const xdg = process.env.XDG_RUNTIME_DIR?.trim();
+  const home = process.env.HOME?.trim() || homedir();
+  const id = uid();
+  const userRun = id !== null ? `/run/user/${id}` : null;
+  const candidates = [
+    raw ? normalizeSocketPath(raw) : null,
+    dockerHostSocket(),
+    xdg ? `${xdg}/docker.sock` : null,
+    userRun ? `${userRun}/docker.sock` : null,
+    home ? `${home}/.docker/run/docker.sock` : null,
+    xdg ? `${xdg}/podman/podman.sock` : null,
+    userRun ? `${userRun}/podman/podman.sock` : null,
+    "/run/podman/podman.sock",
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+  ];
+  for (const c of new Set(candidates)) {
+    if (c && existsSync(c)) return c;
+  }
+  return raw ? normalizeSocketPath(raw) : DEFAULT_SOCKET;
 }
 
 function request(
@@ -57,6 +119,39 @@ function failIfError(action: string, name: string, status: number, body: string)
   throw new Error(`${action} ${name} failed (HTTP ${status}): ${detail || "unknown error"}`);
 }
 
+function isSocketUnreachable(msg: string): boolean {
+  return (
+    msg.includes("ENOENT") || msg.includes("ECONNREFUSED") || msg.includes("EACCES")
+  );
+}
+
+function socketUnreachableError(sock: string, msg: string): Error {
+  const permission =
+    " If the socket exists, check read/write access (usually the `docker` group).";
+  return new Error(
+    `Cannot reach Docker socket at ${sock}. Is Docker running? ` +
+      `(${msg}) Hint: rootless Docker on Fedora uses $XDG_RUNTIME_DIR/docker.sock — ` +
+      `leave the socketPath preference at its default for auto-detect, or set it explicitly.` +
+      permission,
+  );
+}
+
+async function requestWrapped(
+  socketPath: string,
+  method: string,
+  path: string,
+  query?: Record<string, string | number | boolean>,
+): Promise<{ status: number; body: string }> {
+  const sock = resolveSocketPath(socketPath);
+  try {
+    return await request(sock, method, path, query);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (isSocketUnreachable(msg)) throw socketUnreachableError(sock, msg);
+    throw e;
+  }
+}
+
 function parseName(names?: string[]): string {
   if (!names || names.length === 0) return "unnamed";
   return (names[0] ?? "unnamed").replace(/^\//, "");
@@ -76,8 +171,9 @@ function parseConfigFiles(labels: Record<string, string>): string[] {
 }
 
 export async function listContainers(socketPath?: string): Promise<ContainerItem[]> {
-  const sock = socketPath?.trim() || DEFAULT_SOCKET;
-  const { status, body } = await request(sock, "GET", "/containers/json", { all: 1 });
+  const { status, body } = await requestWrapped(socketPath ?? "", "GET", "/containers/json", {
+    all: 1,
+  });
   failIfError("List", "containers", status, body);
   let infos: EngineContainer[];
   try {
@@ -108,14 +204,21 @@ export async function listContainers(socketPath?: string): Promise<ContainerItem
 }
 
 export async function startContainer(id: string, socketPath?: string): Promise<void> {
-  const sock = socketPath?.trim() || DEFAULT_SOCKET;
-  const { status, body } = await request(sock, "POST", `/containers/${id}/start`);
+  const { status, body } = await requestWrapped(
+    socketPath ?? "",
+    "POST",
+    `/containers/${id}/start`,
+  );
   failIfError("Start", id.slice(0, 12), status, body);
 }
 
 export async function stopContainer(id: string, socketPath?: string, timeout = 10): Promise<void> {
-  const sock = socketPath?.trim() || DEFAULT_SOCKET;
-  const { status, body } = await request(sock, "POST", `/containers/${id}/stop`, { t: timeout });
+  const { status, body } = await requestWrapped(
+    socketPath ?? "",
+    "POST",
+    `/containers/${id}/stop`,
+    { t: timeout },
+  );
   failIfError("Stop", id.slice(0, 12), status, body);
 }
 
@@ -124,27 +227,36 @@ export async function restartContainer(
   socketPath?: string,
   timeout = 10,
 ): Promise<void> {
-  const sock = socketPath?.trim() || DEFAULT_SOCKET;
-  const { status, body } = await request(sock, "POST", `/containers/${id}/restart`, { t: timeout });
+  const { status, body } = await requestWrapped(
+    socketPath ?? "",
+    "POST",
+    `/containers/${id}/restart`,
+    { t: timeout },
+  );
   failIfError("Restart", id.slice(0, 12), status, body);
 }
 
 export async function removeContainer(id: string, socketPath?: string): Promise<void> {
   // Safe default: no force, no volumes. Container must be stopped first.
-  const sock = socketPath?.trim() || DEFAULT_SOCKET;
-  const { status, body } = await request(sock, "DELETE", `/containers/${id}`);
+  const { status, body } = await requestWrapped(socketPath ?? "", "DELETE", `/containers/${id}`);
   failIfError("Remove", id.slice(0, 12), status, body);
 }
 
 export async function pauseContainer(id: string, socketPath?: string): Promise<void> {
-  const sock = socketPath?.trim() || DEFAULT_SOCKET;
-  const { status, body } = await request(sock, "POST", `/containers/${id}/pause`);
+  const { status, body } = await requestWrapped(
+    socketPath ?? "",
+    "POST",
+    `/containers/${id}/pause`,
+  );
   failIfError("Pause", id.slice(0, 12), status, body);
 }
 
 export async function unpauseContainer(id: string, socketPath?: string): Promise<void> {
-  const sock = socketPath?.trim() || DEFAULT_SOCKET;
-  const { status, body } = await request(sock, "POST", `/containers/${id}/unpause`);
+  const { status, body } = await requestWrapped(
+    socketPath ?? "",
+    "POST",
+    `/containers/${id}/unpause`,
+  );
   failIfError("Unpause", id.slice(0, 12), status, body);
 }
 

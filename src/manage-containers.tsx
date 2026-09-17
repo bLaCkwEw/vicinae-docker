@@ -96,9 +96,12 @@ export default function ManageContainers() {
       outageNotified.current = false;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      const friendly = msg.includes("ENOENT")
-        ? `Cannot reach Docker socket. Is Docker running?\n${msg}`
-        : msg;
+      let friendly = msg;
+      if (!msg.startsWith("Cannot reach Docker socket")) {
+        const unreachable =
+          msg.includes("ENOENT") || msg.includes("ECONNREFUSED") || msg.includes("EACCES");
+        if (unreachable) friendly = `Cannot reach Docker socket. Is Docker running?\n${msg}`;
+      }
       setError(friendly);
       // A list is already on screen: the stale data would otherwise fail silently.
       // Notify once per outage, not on every 3s tick.
@@ -274,7 +277,14 @@ export default function ManageContainers() {
           <Action
             title="Compose Up"
             icon={Icon.Upload}
-            onAction={() => void mutate(`Compose up ${project.name}`, () => composeUp(project.containers))}
+            onAction={() =>
+              void mutate(`Compose up ${project.name}`, () =>
+                composeUp(
+                  project.containers,
+                  getPreferenceValues<Preferences>().socketPath,
+                ),
+              )
+            }
           />
           <Action
             title="Compose Down"
@@ -288,25 +298,49 @@ export default function ManageContainers() {
                   primaryAction: { title: "Down", style: Alert.ActionStyle.Destructive },
                 })
               ) {
-                await mutate(`Compose down ${project.name}`, () => composeDown(project.containers));
+                await mutate(`Compose down ${project.name}`, () =>
+                  composeDown(
+                    project.containers,
+                    getPreferenceValues<Preferences>().socketPath,
+                  ),
+                );
               }
             }}
           />
           <Action
             title="Compose Start All"
             icon={Icon.Play}
-            onAction={() => void mutate(`Starting ${project.name}`, () => composeStart(project.containers))}
+            onAction={() =>
+              void mutate(`Starting ${project.name}`, () =>
+                composeStart(
+                  project.containers,
+                  getPreferenceValues<Preferences>().socketPath,
+                ),
+              )
+            }
           />
           <Action
             title="Compose Stop All"
             icon={Icon.Stop}
-            onAction={() => void mutate(`Stopping ${project.name}`, () => composeStop(project.containers))}
+            onAction={() =>
+              void mutate(`Stopping ${project.name}`, () =>
+                composeStop(
+                  project.containers,
+                  getPreferenceValues<Preferences>().socketPath,
+                ),
+              )
+            }
           />
           <Action
             title="Compose Restart All"
             icon={Icon.ArrowClockwise}
             onAction={() =>
-              void mutate(`Restarting ${project.name}`, () => composeRestart(project.containers))
+              void mutate(`Restarting ${project.name}`, () =>
+                composeRestart(
+                  project.containers,
+                  getPreferenceValues<Preferences>().socketPath,
+                ),
+              )
             }
           />
           {project.configFiles.length > 0 && (
@@ -425,7 +459,11 @@ export default function ManageContainers() {
                   })
                 ) {
                   await mutate(`Compose up ${k.project}`, () =>
-                    composeUpProject(k.project, k.files),
+                    composeUpProject(
+                      k.project,
+                      k.files,
+                      getPreferenceValues<Preferences>().socketPath,
+                    ),
                   );
                 }
               }}

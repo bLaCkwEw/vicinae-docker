@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
+import { resolveSocketPath } from "./docker";
 import type { ContainerItem } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -38,12 +39,19 @@ async function runCompose(
   project: string,
   configFiles: string[],
   subcommand: string[],
+  socketPath?: string,
 ): Promise<string> {
   const files = sanitizeConfigFiles(configFiles, project);
   // `docker compose -p <project> -f <files> ...` (no cwd dependency when -f is given)
   const args = composeArgs(project, files, subcommand);
+  // Point the CLI at the same socket the Engine API client uses (matters for
+  // rootless Docker, where the default context may point at a missing
+  // /var/run/docker.sock). An explicit DOCKER_HOST in the environment wins.
+  const env = { ...process.env };
+  if (!env.DOCKER_HOST) env.DOCKER_HOST = `unix://${resolveSocketPath(socketPath)}`;
   const { stdout, stderr } = await execFileAsync("docker", ["compose", ...args], {
     timeout: 120_000,
+    env,
   });
   return (stdout + stderr).trim();
 }
@@ -61,33 +69,43 @@ function filesOrThrow(containers: ContainerItem[]): { project: string; files: st
   return { project, files };
 }
 
-export async function composeUp(containers: ContainerItem[]): Promise<string> {
+export async function composeUp(containers: ContainerItem[], socketPath?: string): Promise<string> {
   const { project, files } = filesOrThrow(containers);
-  return runCompose(project, files, ["up", "-d"]);
+  return runCompose(project, files, ["up", "-d"], socketPath);
 }
 
 /** Up for a remembered (currently down) project: no live containers needed. */
-export async function composeUpProject(project: string, files: string[]): Promise<string> {
+export async function composeUpProject(
+  project: string,
+  files: string[],
+  socketPath?: string,
+): Promise<string> {
   if (files.length === 0) throw composeMissingFilesError(project);
-  return runCompose(project, files, ["up", "-d"]);
+  return runCompose(project, files, ["up", "-d"], socketPath);
 }
 
-export async function composeDown(containers: ContainerItem[]): Promise<string> {
+export async function composeDown(containers: ContainerItem[], socketPath?: string): Promise<string> {
   const { project, files } = filesOrThrow(containers);
-  return runCompose(project, files, ["down"]);
+  return runCompose(project, files, ["down"], socketPath);
 }
 
-export async function composeStart(containers: ContainerItem[]): Promise<string> {
+export async function composeStart(
+  containers: ContainerItem[],
+  socketPath?: string,
+): Promise<string> {
   const { project, files } = filesOrThrow(containers);
-  return runCompose(project, files, ["start"]);
+  return runCompose(project, files, ["start"], socketPath);
 }
 
-export async function composeStop(containers: ContainerItem[]): Promise<string> {
+export async function composeStop(containers: ContainerItem[], socketPath?: string): Promise<string> {
   const { project, files } = filesOrThrow(containers);
-  return runCompose(project, files, ["stop"]);
+  return runCompose(project, files, ["stop"], socketPath);
 }
 
-export async function composeRestart(containers: ContainerItem[]): Promise<string> {
+export async function composeRestart(
+  containers: ContainerItem[],
+  socketPath?: string,
+): Promise<string> {
   const { project, files } = filesOrThrow(containers);
-  return runCompose(project, files, ["restart"]);
+  return runCompose(project, files, ["restart"], socketPath);
 }

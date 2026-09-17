@@ -20,7 +20,14 @@ containers and Compose projects — all from the launcher.
 - **Live updates** — silent 3s poll while the view is open, instant refresh
   after every action, no caching
 - **Configurable socket** — `socketPath` preference (default
-  `/var/run/docker.sock`), supports rootless / Podman overrides
+  `/var/run/docker.sock` acts as auto-detect: `$DOCKER_HOST`,
+  `$XDG_RUNTIME_DIR/docker.sock` for rootless Docker, then Podman sockets,
+  then the default). Set another path to override (the default value always
+  means auto-detect); `unix://` and `~/` prefixes are accepted. Compose
+  actions point `DOCKER_HOST` at the same resolved socket. Note: a non-`unix://`
+  `DOCKER_HOST` (tcp/ssh) is honored by Compose but not by the Engine API
+  client, which only speaks over unix sockets — the two can point at different
+  daemons in that setup.
 
 ## Requirements
 
